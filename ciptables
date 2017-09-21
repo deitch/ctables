@@ -1,0 +1,51 @@
+#!/bin/sh
+
+help() {
+cat << EOF
+
+Syntax:
+  $0 <guest> <iptables command>
+
+  Example:
+  $0 hopeful_davinci -A INPUT -p tcp -s 10.10.10.1 -j REJECT
+
+EOF
+  exit 1
+}
+
+[ $# -ge 2 ] ||  help 
+
+GUESTNAME=$1
+shift # Remove the first arg from $@
+COMMAND="$@"  # Concatenate all the remaining args into $COMMAND
+
+# find the guest
+# try to lookup the container with Docker.
+RETRIES=3
+while [ "$RETRIES" -gt 0 ]; do
+  DOCKERPID=$(docker inspect --format='{{ .State.Pid }}' "$GUESTNAME")
+  [ "$DOCKERPID" != 0 ] && break
+  sleep 1
+  RETRIES=$((RETRIES - 1))
+done
+
+[ "$DOCKERPID" = 0 ] && {
+  die 1 "Docker inspect returned invalid PID 0"
+}
+
+[ "$DOCKERPID" = "<no value>" ] && {
+  die 1 "Container $GUESTNAME not found, and unknown to Docker."
+}
+
+NSPID=$DOCKERPID
+LINKFILE="/var/run/netns/$NSPID"
+
+# make the link
+mkdir -p /var/run/netns
+/bin/rm -f "$LINKFILE"
+ln -s "/proc/$NSPID/ns/net" "$LINKFILE"
+
+# Execute the command
+ip netns exec $NSPID iptables $COMMAND
+
+/bin/rm -f "$LINKFILE"
